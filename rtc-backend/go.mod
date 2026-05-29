@@ -1,4 +1,4 @@
-module github.com/transkarpation/gortc
+module github.com/transkarpation/gortc/rtc-backend
 
 go 1.26.1
 

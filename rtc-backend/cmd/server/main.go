@@ -18,8 +18,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/joho/godotenv"
-	"github.com/transkarpation/gortc/internal/config"
-	"github.com/transkarpation/gortc/internal/ws"
+	"github.com/transkarpation/gortc/rtc-backend/internal/config"
+	"github.com/transkarpation/gortc/rtc-backend/internal/ws"
 )
 
 //go:embed index.html
