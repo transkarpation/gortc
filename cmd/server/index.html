@@ -179,11 +179,12 @@
   });
 
   async function mint() {
+    const apiKey = document.getElementById("apiKey").value;
     const userId = document.getElementById("userId").value;
-    if (!userId) { log("sys", "enter a userId before minting"); return; }
+    if (!apiKey || !userId) { log("sys", "enter an apiKey and userId before minting"); return; }
     try {
-      const res = await fetch(`/dev/token?userId=${encodeURIComponent(userId)}`);
-      if (!res.ok) { log("sys", `mint failed (${res.status}); is the server running with -dev?`); return; }
+      const res = await fetch(`/dev/token?apiKey=${encodeURIComponent(apiKey)}&userId=${encodeURIComponent(userId)}`);
+      if (!res.ok) { log("sys", `mint failed (${res.status}); check apiKey and that the server runs with -dev`); return; }
       const data = await res.json();
       document.getElementById("token").value = data.token;
       log("sys", `minted token for "${userId}" (expires in ${data.expiresIn})`);

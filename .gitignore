@@ -3,5 +3,8 @@
 .env.*
 !.env.example
 
+# App credentials config (contains secrets)
+apps.json
+
 # Build output
 /gortc-server

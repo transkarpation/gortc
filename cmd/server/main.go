@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/joho/godotenv"
+	"github.com/transkarpation/gortc/internal/config"
 	"github.com/transkarpation/gortc/internal/ws"
 )
 
@@ -26,6 +27,23 @@ var indexHTML []byte
 
 // redactedQueryParams are stripped from request URLs before they are logged.
 var redactedQueryParams = []string{"apiKey", "authorization"}
+
+// envOr returns the value of the environment variable key, or def if unset.
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// appsByKey indexes configured apps by their API key for the Authenticator.
+func appsByKey(apps []config.App) map[string]ws.App {
+	m := make(map[string]ws.App, len(apps))
+	for _, a := range apps {
+		m[a.APIKey] = ws.App{AppID: a.AppID, APISecret: []byte(a.APISecret)}
+	}
+	return m
+}
 
 // redactingLogger logs each request like chi's middleware.Logger but masks
 // sensitive query parameters so secrets never reach the logs.
@@ -42,19 +60,20 @@ func redactingLogger(next http.Handler) http.Handler {
 	})
 }
 
-// devTokenHandler mints a JWT for the requested userId. It exists only to make
-// local testing easy and is registered solely when -dev is set.
+// devTokenHandler mints a JWT for the requested apiKey + userId. It exists only
+// to make local testing easy and is registered solely when -dev is set.
 func devTokenHandler(auth ws.Authenticator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID := r.URL.Query().Get("userId")
-		if userID == "" {
-			http.Error(w, "missing userId query parameter", http.StatusBadRequest)
+		q := r.URL.Query()
+		apiKey, userID := q.Get("apiKey"), q.Get("userId")
+		if apiKey == "" || userID == "" {
+			http.Error(w, "missing apiKey or userId query parameter", http.StatusBadRequest)
 			return
 		}
 		ttl := time.Hour
-		token, err := auth.Mint(userID, ttl)
+		token, err := auth.Mint(apiKey, userID, ttl)
 		if err != nil {
-			http.Error(w, "failed to mint token", http.StatusInternalServerError)
+			http.Error(w, "unknown apiKey", http.StatusBadRequest)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -119,16 +138,21 @@ func main() {
 	}
 
 	addr := flag.String("addr", ":8080", "HTTP service address")
-	apiKey := flag.String("api-key", os.Getenv("WS_API_KEY"), "expected apiKey for websocket auth (env: WS_API_KEY)")
-	jwtSecret := flag.String("jwt-secret", os.Getenv("WS_JWT_SECRET"), "HMAC secret for verifying the authorization JWT (env: WS_JWT_SECRET)")
+	appsFile := flag.String("apps-file", envOr("WS_APPS_FILE", "apps.json"), "path to the JSON apps config (env: WS_APPS_FILE)")
 	publishSecret := flag.String("publish-secret", os.Getenv("WS_PUBLISH_SECRET"), "shared secret required (Authorization header) to call POST /publish (env: WS_PUBLISH_SECRET)")
 	dev := flag.Bool("dev", false, "enable the /dev/token endpoint for minting test JWTs (never use in production)")
 	flag.Parse()
 
-	if *apiKey == "" || *jwtSecret == "" || *publishSecret == "" {
-		log.Fatal("-api-key, -jwt-secret and -publish-secret (or WS_API_KEY / WS_JWT_SECRET / WS_PUBLISH_SECRET) must all be set")
+	if *publishSecret == "" {
+		log.Fatal("-publish-secret (or WS_PUBLISH_SECRET) must be set")
 	}
-	auth := ws.Authenticator{APIKey: *apiKey, JWTSecret: []byte(*jwtSecret)}
+
+	cfg, err := config.Load(*appsFile)
+	if err != nil {
+		log.Fatalf("load apps config: %v", err)
+	}
+	auth := ws.NewAuthenticator(appsByKey(cfg.Apps))
+	log.Printf("loaded %d app(s) from %s", len(cfg.Apps), *appsFile)
 
 	hub := ws.NewHub()
 	go hub.Run()

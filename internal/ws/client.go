@@ -41,6 +41,9 @@ type Client struct {
 	// channels is the set of channels this client is subscribed to. It is only
 	// ever accessed from the hub's Run goroutine.
 	channels map[string]bool
+	// appID and userID identify the authenticated principal behind the socket.
+	appID  string
+	userID string
 }
 
 // readPump drains the connection so that control frames (pong, close) are
@@ -122,7 +125,8 @@ func (c *Client) writePump() {
 // The handshake is authenticated first (see Authenticator); on failure it is
 // rejected with 401 before the connection is upgraded.
 func ServeWS(hub *Hub, auth Authenticator, w http.ResponseWriter, r *http.Request) {
-	if err := auth.authenticate(r); err != nil {
+	principal, err := auth.authenticate(r)
+	if err != nil {
 		log.Printf("ws: handshake rejected: %v", err)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -138,8 +142,11 @@ func ServeWS(hub *Hub, auth Authenticator, w http.ResponseWriter, r *http.Reques
 		conn:     conn,
 		send:     make(chan []byte, 256),
 		channels: make(map[string]bool),
+		appID:    principal.AppID,
+		userID:   principal.UserID,
 	}
 	client.hub.register <- client
+	log.Printf("ws: connected app=%s user=%s", client.appID, client.userID)
 
 	// Subscribe to the channels named in the "channels" query parameter
 	// (comma-separated), e.g. /ws?...&channels=news,sports.
