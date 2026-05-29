@@ -45,6 +45,7 @@
   button:disabled { opacity: .5; cursor: not-allowed; }
   .controls { display: flex; gap: .5rem; margin-bottom: .5rem; }
   .creds { display: flex; gap: .5rem; margin-bottom: .25rem; }
+  .reconnect { display: inline-flex; align-items: center; gap: .3rem; font-size: .8rem; opacity: .8; margin-left: auto; }
   code { background: color-mix(in srgb, currentColor 12%, transparent); padding: 0 .25rem; border-radius: 4px; }
 </style>
 </head>
@@ -65,6 +66,7 @@
     <button id="connect" class="ghost" type="button">Connect</button>
     <button id="disconnect" class="ghost" type="button" disabled>Disconnect</button>
     <button id="clear" class="ghost" type="button">Clear log</button>
+    <label class="reconnect"><input id="reconnect" type="checkbox" checked> auto-reconnect</label>
   </div>
 
   <p class="sub">On connect you are auto-subscribed to your personal channel <code>appId:userId</code>. The socket is receive-only — publish to that channel over HTTP below to reach this user.</p>
@@ -89,8 +91,15 @@
   const clearBtn = document.getElementById("clear");
   const mintBtn = document.getElementById("mint");
   const pubChannelInput = document.getElementById("pubChannel");
+  const reconnectCheckbox = document.getElementById("reconnect");
 
   let ws = null;
+  let manualClose = false;      // true when the user clicked Disconnect
+  let reconnectAttempts = 0;
+  let reconnectTimer = null;
+
+  const RECONNECT_BASE_MS = 500;
+  const RECONNECT_MAX_MS = 10000;
 
   function wsURL() {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -127,14 +136,20 @@
 
   function connect() {
     if (ws) return;
+    clearTimeout(reconnectTimer);
+    manualClose = false;
     setStatus("connecting…", "pending");
     log("sys", `connecting to ${wsURL()}`);
     ws = new WebSocket(wsURL());
 
-    ws.onopen = () => { setStatus("connected", "on"); setConnected(true); log("sys", "connection open"); };
+    ws.onopen = () => {
+      reconnectAttempts = 0;
+      setStatus("connected", "on"); setConnected(true); log("sys", "connection open");
+    };
     ws.onclose = (e) => {
       setStatus("disconnected", "off"); setConnected(false); ws = null;
       log("sys", `connection closed (code ${e.code}${e.reason ? ", " + e.reason : ""})`);
+      if (!manualClose && reconnectCheckbox.checked) scheduleReconnect();
     };
     ws.onerror = () => log("sys", "connection error");
     ws.onmessage = (e) => {
@@ -149,7 +164,26 @@
     };
   }
 
-  function disconnect() { if (ws) ws.close(); }
+  function scheduleReconnect() {
+    // Exponential backoff with jitter, capped at RECONNECT_MAX_MS.
+    const backoff = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** reconnectAttempts);
+    const delay = Math.round(backoff * (0.5 + Math.random() / 2));
+    reconnectAttempts++;
+    setStatus("reconnecting…", "pending");
+    // Keep Disconnect enabled so the user can cancel a pending reconnect.
+    connectBtn.disabled = true;
+    disconnectBtn.disabled = false;
+    log("sys", `reconnecting in ${(delay / 1000).toFixed(1)}s (attempt ${reconnectAttempts})`);
+    reconnectTimer = setTimeout(() => { if (!manualClose) connect(); }, delay);
+  }
+
+  function disconnect() {
+    manualClose = true;
+    clearTimeout(reconnectTimer);
+    reconnectAttempts = 0;
+    if (ws) ws.close();
+    else { setStatus("disconnected", "off"); setConnected(false); }
+  }
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
