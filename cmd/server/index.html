@@ -143,6 +143,7 @@
         let m;
         try { m = JSON.parse(line); } catch { log("recv", `← ${line}`); return; }
         if (m.error) log("sys", `error: ${m.error}`);
+        else if (m.type === "connected") log("sys", `connection id: ${m.connectionId}`);
         else log("recv", `← [${m.channel}] ${m.data}`);
       });
     };

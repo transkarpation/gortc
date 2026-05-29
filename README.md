@@ -43,7 +43,12 @@ channel. Messages are pushed in by trusted backend services through an HTTP
 | `GET /healthz` | — | Liveness check, returns `ok`. |
 | `GET /ws` | `apiKey` + `userId` + `authorization` (JWT) query params | WebSocket connection; auto-subscribes to `appId:userId`. |
 | `POST /publish` | `Authorization` header == publish secret | Body `{"channel":"...","data":"..."}`; delivers to that channel's subscribers. Returns `202`. |
+| `POST /subscribe` | `Authorization` header == publish secret | Body `{"connectionId":"...","channels":["..."]}`; subscribes that connection to the channels. `202`, or `404` if the connection id is unknown. |
 | `GET /dev/token` | dev mode only | Mints a test JWT. Query: `apiKey`, `userId`. |
+
+On a successful connect the server immediately sends the connection's id:
+`{"type":"connected","connectionId":"..."}`. Use that id with `POST /subscribe`
+to add the connection to additional channels.
 
 Messages delivered to subscribers are JSON: `{"channel":"...","data":"..."}`.
 

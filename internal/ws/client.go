@@ -1,6 +1,9 @@
 package ws
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"time"
@@ -49,6 +52,21 @@ type Client struct {
 	// appID and userID identify the authenticated principal behind the socket.
 	appID  string
 	userID string
+	// connID is a unique identifier for this connection.
+	connID string
+}
+
+// connected is the first message sent to a client after a successful handshake.
+type connected struct {
+	Type         string `json:"type"`
+	ConnectionID string `json:"connectionId"`
+}
+
+// newConnectionID returns a random 128-bit hex identifier.
+func newConnectionID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:]) // crypto/rand.Read never returns an error
+	return hex.EncodeToString(b[:])
 }
 
 // readPump drains the connection so that control frames (pong, close) are
@@ -149,6 +167,7 @@ func ServeWS(hub *Hub, auth Authenticator, w http.ResponseWriter, r *http.Reques
 		channels: make(map[string]bool),
 		appID:    principal.AppID,
 		userID:   principal.UserID,
+		connID:   newConnectionID(),
 	}
 	client.hub.register <- client
 
@@ -156,7 +175,13 @@ func ServeWS(hub *Hub, auth Authenticator, w http.ResponseWriter, r *http.Reques
 	// publishers can target an individual user.
 	channel := PersonalChannel(client.appID, client.userID)
 	client.hub.subscribe <- subscription{client: client, channel: channel}
-	slog.Info("ws connected", "app", client.appID, "user", client.userID, "channel", channel)
+	slog.Info("ws connected", "app", client.appID, "user", client.userID, "channel", channel, "conn", client.connID)
+
+	// Send the connection id as the first message. The send buffer is empty and
+	// buffered, so this never blocks before the write pump starts.
+	if msg, err := json.Marshal(connected{Type: "connected", ConnectionID: client.connID}); err == nil {
+		client.send <- msg
+	}
 
 	// Allow collection of memory referenced by the caller by doing all work
 	// in new goroutines.

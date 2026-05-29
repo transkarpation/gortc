@@ -105,16 +105,25 @@ func devTokenHandler(auth ws.Authenticator) http.HandlerFunc {
 	}
 }
 
+// internalAuth guards server-to-server endpoints: the Authorization header must
+// equal the shared secret.
+func internalAuth(secret string) func(http.Handler) http.Handler {
+	want := []byte(secret)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), want) != 1 {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // publishHandler delivers a posted message to all websocket clients subscribed
-// to the given channel. It is an internal, server-to-server endpoint guarded by
-// a shared secret: the Authorization header must equal publishSecret.
-func publishHandler(hub *ws.Hub, publishSecret string) http.HandlerFunc {
-	secret := []byte(publishSecret)
+// to the given channel.
+func publishHandler(hub *ws.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), secret) != 1 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
 		var body struct {
 			Channel string `json:"channel"`
 			Data    string `json:"data"`
@@ -128,6 +137,34 @@ func publishHandler(hub *ws.Hub, publishSecret string) http.HandlerFunc {
 			return
 		}
 		hub.Publish(body.Channel, []byte(body.Data))
+		w.WriteHeader(http.StatusAccepted)
+	}
+}
+
+// subscribeHandler subscribes the connection identified by connectionId to the
+// given channels. Returns 404 if no connection with that id exists.
+func subscribeHandler(hub *ws.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			ConnectionID string   `json:"connectionId"`
+			Channels     []string `json:"channels"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
+			http.Error(w, "invalid JSON body", http.StatusBadRequest)
+			return
+		}
+		if body.ConnectionID == "" {
+			http.Error(w, "missing connectionId", http.StatusBadRequest)
+			return
+		}
+		if len(body.Channels) == 0 {
+			http.Error(w, "missing channels", http.StatusBadRequest)
+			return
+		}
+		if !hub.Subscribe(body.ConnectionID, body.Channels) {
+			http.Error(w, "unknown connectionId", http.StatusNotFound)
+			return
+		}
 		w.WriteHeader(http.StatusAccepted)
 	}
 }
@@ -198,7 +235,13 @@ func main() {
 	r.Get("/ws", func(w http.ResponseWriter, r *http.Request) {
 		ws.ServeWS(hub, auth, w, r)
 	})
-	r.Post("/publish", publishHandler(hub, *publishSecret))
+
+	// Internal server-to-server endpoints, guarded by the shared publish secret.
+	r.Group(func(r chi.Router) {
+		r.Use(internalAuth(*publishSecret))
+		r.Post("/publish", publishHandler(hub))
+		r.Post("/subscribe", subscribeHandler(hub))
+	})
 
 	if *dev {
 		slog.Warn("dev mode enabled: /dev/token will mint JWTs for any userId")
