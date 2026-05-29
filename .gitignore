@@ -1,0 +1,7 @@
+# Local environment files (never commit real secrets)
+.env
+.env.*
+!.env.example
+
+# Build output
+/gortc-server

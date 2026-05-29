@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/joho/godotenv"
 	"github.com/transkarpation/gortc/internal/ws"
 )
 
@@ -83,6 +84,12 @@ func redactURL(u *url.URL) string {
 }
 
 func main() {
+	// Load .env into the process environment before reading flag defaults. A
+	// missing file is fine; real environment variables always take precedence.
+	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
+		log.Printf("warning: could not load .env: %v", err)
+	}
+
 	addr := flag.String("addr", ":8080", "HTTP service address")
 	apiKey := flag.String("api-key", os.Getenv("WS_API_KEY"), "expected apiKey for websocket auth (env: WS_API_KEY)")
 	jwtSecret := flag.String("jwt-secret", os.Getenv("WS_JWT_SECRET"), "HMAC secret for verifying the authorization JWT (env: WS_JWT_SECRET)")
