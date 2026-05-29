@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gortc · WebSocket test</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    margin: 0; padding: 1.5rem; max-width: 760px; margin-inline: auto;
+    line-height: 1.5;
+  }
+  h1 { font-size: 1.25rem; margin: 0 0 .25rem; }
+  .sub { opacity: .65; margin: 0 0 1rem; font-size: .85rem; }
+  #status {
+    display: inline-block; padding: .15rem .55rem; border-radius: 999px;
+    font-size: .8rem; font-weight: 600;
+  }
+  .on  { background: #1a7f37; color: #fff; }
+  .off { background: #cf222e; color: #fff; }
+  .pending { background: #9a6700; color: #fff; }
+  #log {
+    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    border-radius: 8px; height: 340px; overflow-y: auto;
+    padding: .5rem .75rem; margin: 1rem 0; font-size: .85rem;
+  }
+  .line { white-space: pre-wrap; word-break: break-word; padding: .1rem 0; }
+  .line .t { opacity: .45; margin-right: .5rem; }
+  .recv .b { color: #1a7f37; }
+  .sent .b { color: #0969da; }
+  .sys  { opacity: .6; font-style: italic; }
+  form { display: flex; gap: .5rem; }
+  input[type=text] {
+    flex: 1; padding: .55rem .7rem; border-radius: 8px;
+    border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+    background: transparent; color: inherit; font: inherit;
+  }
+  button {
+    padding: .55rem 1rem; border-radius: 8px; border: 0; cursor: pointer;
+    font: inherit; font-weight: 600; background: #0969da; color: #fff;
+  }
+  button.ghost { background: color-mix(in srgb, currentColor 15%, transparent); color: inherit; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .controls { display: flex; gap: .5rem; margin-bottom: .5rem; }
+</style>
+</head>
+<body>
+  <h1>gortc WebSocket test</h1>
+  <p class="sub">Broadcast hub — open this page in multiple tabs to see messages relayed to every client.</p>
+
+  <div class="controls">
+    <span id="status" class="off">disconnected</span>
+    <button id="connect" class="ghost" type="button">Connect</button>
+    <button id="disconnect" class="ghost" type="button" disabled>Disconnect</button>
+    <button id="clear" class="ghost" type="button">Clear log</button>
+  </div>
+
+  <div id="log" aria-live="polite"></div>
+
+  <form id="form">
+    <input id="msg" type="text" placeholder="Type a message and press Enter…" autocomplete="off" disabled>
+    <button id="send" type="submit" disabled>Send</button>
+  </form>
+
+<script>
+  const statusEl = document.getElementById("status");
+  const logEl = document.getElementById("log");
+  const form = document.getElementById("form");
+  const input = document.getElementById("msg");
+  const sendBtn = document.getElementById("send");
+  const connectBtn = document.getElementById("connect");
+  const disconnectBtn = document.getElementById("disconnect");
+  const clearBtn = document.getElementById("clear");
+
+  let ws = null;
+
+  function wsURL() {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${location.host}/ws`;
+  }
+
+  function log(kind, body) {
+    const line = document.createElement("div");
+    line.className = `line ${kind}`;
+    const time = new Date().toLocaleTimeString();
+    line.innerHTML = `<span class="t">${time}</span><span class="b"></span>`;
+    line.querySelector(".b").textContent = body;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function setStatus(text, cls) {
+    statusEl.textContent = text;
+    statusEl.className = cls;
+  }
+
+  function setConnected(connected) {
+    input.disabled = sendBtn.disabled = !connected;
+    disconnectBtn.disabled = !connected;
+    connectBtn.disabled = connected;
+    if (connected) input.focus();
+  }
+
+  function connect() {
+    if (ws) return;
+    setStatus("connecting…", "pending");
+    log("sys", `connecting to ${wsURL()}`);
+    ws = new WebSocket(wsURL());
+
+    ws.onopen = () => { setStatus("connected", "on"); setConnected(true); log("sys", "connection open"); };
+    ws.onclose = (e) => {
+      setStatus("disconnected", "off"); setConnected(false); ws = null;
+      log("sys", `connection closed (code ${e.code}${e.reason ? ", " + e.reason : ""})`);
+    };
+    ws.onerror = () => log("sys", "connection error");
+    ws.onmessage = (e) => {
+      // The hub may pack several queued messages into one frame, newline-separated.
+      e.data.split("\n").forEach((m) => log("recv", `← ${m}`));
+    };
+  }
+
+  function disconnect() { if (ws) ws.close(); }
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = input.value;
+    if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(text);
+    log("sent", `→ ${text}`);
+    input.value = "";
+  });
+
+  connectBtn.addEventListener("click", connect);
+  disconnectBtn.addEventListener("click", disconnect);
+  clearBtn.addEventListener("click", () => { logEl.innerHTML = ""; });
+
+  // Auto-connect on load.
+  connect();
+</script>
+</body>
+</html>
