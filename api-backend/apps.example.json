@@ -1,0 +1,14 @@
+{
+  "apps": [
+    {
+      "appId": "demo-app",
+      "apiKey": "demo-key",
+      "apiSecret": "change-me-to-a-long-random-secret"
+    },
+    {
+      "appId": "second-app",
+      "apiKey": "second-key",
+      "apiSecret": "another-long-random-secret"
+    }
+  ]
+}
