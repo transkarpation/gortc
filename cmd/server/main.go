@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/transkarpation/gortc/internal/ws"
 )
 
@@ -25,29 +27,29 @@ func main() {
 	hub := ws.NewHub()
 	go hub.Run()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(indexHTML)
 	})
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
-	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+	r.Get("/ws", func(w http.ResponseWriter, r *http.Request) {
 		ws.ServeWS(hub, w, r)
 	})
 
 	srv := &http.Server{
-		Addr:         *addr,
-		Handler:      mux,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:        *addr,
+		Handler:     r,
+		ReadTimeout: 15 * time.Second,
+		// No WriteTimeout: it would abort long-lived websocket connections.
+		IdleTimeout: 60 * time.Second,
 	}
 
 	// Start the server in a goroutine so we can listen for shutdown signals.
