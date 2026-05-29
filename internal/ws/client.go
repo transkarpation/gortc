@@ -1,9 +1,9 @@
 package ws
 
 import (
-	"bytes"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -20,13 +20,10 @@ const (
 	pingPeriod = (pongWait * 9) / 10
 
 	// Maximum message size allowed from peer.
-	maxMessageSize = 512
+	maxMessageSize = 4096
 )
 
-var (
-	newline = []byte{'\n'}
-	space   = []byte{' '}
-)
+var newline = []byte{'\n'}
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
@@ -41,13 +38,17 @@ type Client struct {
 	conn *websocket.Conn
 	// Buffered channel of outbound messages.
 	send chan []byte
+	// channels is the set of channels this client is subscribed to. It is only
+	// ever accessed from the hub's Run goroutine.
+	channels map[string]bool
 }
 
-// readPump pumps messages from the websocket connection to the hub.
+// readPump drains the connection so that control frames (pong, close) are
+// processed and a dropped peer is detected. Clients are receive-only: any data
+// frames they send are ignored. Publishing happens via the HTTP /publish
+// endpoint, not over the socket.
 //
-// The application runs readPump in a per-connection goroutine. It ensures
-// that there is at most one reader on a connection by executing all reads
-// from this goroutine.
+// It runs in a per-connection goroutine, ensuring at most one reader.
 func (c *Client) readPump() {
 	defer func() {
 		c.hub.unregister <- c
@@ -60,15 +61,12 @@ func (c *Client) readPump() {
 		return nil
 	})
 	for {
-		_, message, err := c.conn.ReadMessage()
-		if err != nil {
+		if _, _, err := c.conn.ReadMessage(); err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("ws: unexpected close: %v", err)
 			}
 			break
 		}
-		message = bytes.TrimSpace(bytes.ReplaceAll(message, newline, space))
-		c.hub.broadcast <- message
 	}
 }
 
@@ -135,8 +133,21 @@ func ServeWS(hub *Hub, auth Authenticator, w http.ResponseWriter, r *http.Reques
 		log.Printf("ws: upgrade failed: %v", err)
 		return
 	}
-	client := &Client{hub: hub, conn: conn, send: make(chan []byte, 256)}
+	client := &Client{
+		hub:      hub,
+		conn:     conn,
+		send:     make(chan []byte, 256),
+		channels: make(map[string]bool),
+	}
 	client.hub.register <- client
+
+	// Subscribe to the channels named in the "channels" query parameter
+	// (comma-separated), e.g. /ws?...&channels=news,sports.
+	for ch := range strings.SplitSeq(r.URL.Query().Get("channels"), ",") {
+		if ch = strings.TrimSpace(ch); ch != "" {
+			client.hub.subscribe <- subscription{client: client, channel: ch}
+		}
+	}
 
 	// Allow collection of memory referenced by the caller by doing all work
 	// in new goroutines.

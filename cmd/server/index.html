@@ -50,7 +50,7 @@
 </head>
 <body>
   <h1>gortc WebSocket test</h1>
-  <p class="sub">Broadcast hub — open this page in multiple tabs to see messages relayed to every client.</p>
+  <p class="sub">Pub/sub hub — subscribe to a channel, then open this page in multiple tabs and publish to see messages relayed to every subscriber of that channel.</p>
 
   <div class="creds">
     <input id="apiKey" type="text" placeholder="apiKey" value="demo-key" autocomplete="off">
@@ -67,11 +67,18 @@
     <button id="clear" class="ghost" type="button">Clear log</button>
   </div>
 
+  <div class="controls">
+    <input id="channels" type="text" placeholder="channels to subscribe (comma-separated)" value="news" autocomplete="off">
+  </div>
+  <p class="sub">Subscriptions are set when you connect. The socket is receive-only — publishing is done over HTTP below.</p>
+
   <div id="log" aria-live="polite"></div>
 
   <form id="form">
-    <input id="msg" type="text" placeholder="Type a message and press Enter…" autocomplete="off" disabled>
-    <button id="send" type="submit" disabled>Send</button>
+    <input id="pubChannel" type="text" placeholder="channel" value="news" autocomplete="off">
+    <input id="pubSecret" type="text" placeholder="publish secret (Authorization)" autocomplete="off">
+    <input id="msg" type="text" placeholder="Message to POST /publish…" autocomplete="off">
+    <button id="send" type="submit">Publish</button>
   </form>
 
 <script>
@@ -84,6 +91,8 @@
   const disconnectBtn = document.getElementById("disconnect");
   const clearBtn = document.getElementById("clear");
   const mintBtn = document.getElementById("mint");
+  const channelsInput = document.getElementById("channels");
+  const pubChannelInput = document.getElementById("pubChannel");
 
   let ws = null;
 
@@ -95,6 +104,7 @@
       apiKey: document.getElementById("apiKey").value,
       userId: document.getElementById("userId").value,
       authorization: document.getElementById("token").value,
+      channels: channelsInput.value,
     });
     return `${proto}//${location.host}/ws?${params}`;
   }
@@ -115,9 +125,9 @@
   }
 
   function setConnected(connected) {
-    input.disabled = sendBtn.disabled = !connected;
     disconnectBtn.disabled = !connected;
     connectBtn.disabled = connected;
+    channelsInput.disabled = connected;
     if (connected) input.focus();
   }
 
@@ -135,19 +145,37 @@
     ws.onerror = () => log("sys", "connection error");
     ws.onmessage = (e) => {
       // The hub may pack several queued messages into one frame, newline-separated.
-      e.data.split("\n").forEach((m) => log("recv", `← ${m}`));
+      e.data.split("\n").forEach((line) => {
+        let m;
+        try { m = JSON.parse(line); } catch { log("recv", `← ${line}`); return; }
+        if (m.error) log("sys", `error: ${m.error}`);
+        else log("recv", `← [${m.channel}] ${m.data}`);
+      });
     };
   }
 
   function disconnect() { if (ws) ws.close(); }
 
-  form.addEventListener("submit", (e) => {
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const text = input.value;
-    if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(text);
-    log("sent", `→ ${text}`);
-    input.value = "";
+    const channel = pubChannelInput.value;
+    const data = input.value;
+    if (!channel || !data) return;
+    try {
+      const res = await fetch("/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": document.getElementById("pubSecret").value },
+        body: JSON.stringify({ channel, data }),
+      });
+      if (res.status === 202) {
+        log("sent", `→ POST /publish [${channel}] ${data}`);
+        input.value = "";
+      } else {
+        log("sys", `publish failed (${res.status}): ${(await res.text()).trim()}`);
+      }
+    } catch (err) {
+      log("sys", `publish error: ${err}`);
+    }
   });
 
   async function mint() {
