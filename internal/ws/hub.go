@@ -14,6 +14,7 @@ type Hub struct {
 	subscribe     chan subscription
 	subscribeConn chan subscribeRequest
 	publishes     chan publication
+	stats         chan chan Stats
 
 	// clients holds every connected client.
 	clients map[*Client]bool
@@ -21,6 +22,13 @@ type Hub struct {
 	byConnID map[string]*Client
 	// channels maps a channel name to the set of clients subscribed to it.
 	channels map[string]map[*Client]bool
+}
+
+// Stats is a snapshot of the hub's bookkeeping, useful for metrics and tests.
+type Stats struct {
+	Clients     int // connected clients
+	Connections int // entries in the connection-id index
+	Channels    int // channels with at least one subscriber
 }
 
 // subscription is a request to (un)subscribe a client to a channel.
@@ -57,6 +65,7 @@ func NewHub() *Hub {
 		subscribe:     make(chan subscription),
 		subscribeConn: make(chan subscribeRequest),
 		publishes:     make(chan publication),
+		stats:         make(chan chan Stats),
 		clients:       make(map[*Client]bool),
 		byConnID:      make(map[string]*Client),
 		channels:      make(map[string]map[*Client]bool),
@@ -79,6 +88,12 @@ func (h *Hub) Run() {
 			h.subscribeByConn(req)
 		case p := <-h.publishes:
 			h.deliver(p)
+		case reply := <-h.stats:
+			reply <- Stats{
+				Clients:     len(h.clients),
+				Connections: len(h.byConnID),
+				Channels:    len(h.channels),
+			}
 		}
 	}
 }
@@ -94,6 +109,14 @@ func (h *Hub) Publish(channel string, data []byte) {
 func (h *Hub) Subscribe(connID string, channels []string) bool {
 	reply := make(chan bool, 1)
 	h.subscribeConn <- subscribeRequest{connID: connID, channels: channels, reply: reply}
+	return <-reply
+}
+
+// Stats returns a snapshot of the hub's current bookkeeping. Safe for
+// concurrent use.
+func (h *Hub) Stats() Stats {
+	reply := make(chan Stats, 1)
+	h.stats <- reply
 	return <-reply
 }
 
