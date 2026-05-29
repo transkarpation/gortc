@@ -7,6 +7,7 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -20,16 +21,59 @@ import (
 //go:embed index.html
 var indexHTML []byte
 
+// redactedQueryParams are stripped from request URLs before they are logged.
+var redactedQueryParams = []string{"apiKey", "authorization"}
+
+// redactingLogger logs each request like chi's middleware.Logger but masks
+// sensitive query parameters so secrets never reach the logs.
+func redactingLogger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		start := time.Now()
+		defer func() {
+			log.Printf("%q %s -> %d %dB in %s",
+				r.Method+" "+redactURL(r.URL), r.RemoteAddr,
+				ww.Status(), ww.BytesWritten(), time.Since(start))
+		}()
+		next.ServeHTTP(ww, r)
+	})
+}
+
+// redactURL returns the request URI with sensitive query parameters masked.
+func redactURL(u *url.URL) string {
+	q := u.Query()
+	masked := false
+	for _, k := range redactedQueryParams {
+		if q.Has(k) {
+			q.Set(k, "REDACTED")
+			masked = true
+		}
+	}
+	if !masked {
+		return u.RequestURI()
+	}
+	redacted := *u
+	redacted.RawQuery = q.Encode()
+	return redacted.RequestURI()
+}
+
 func main() {
 	addr := flag.String("addr", ":8080", "HTTP service address")
+	apiKey := flag.String("api-key", os.Getenv("WS_API_KEY"), "expected apiKey for websocket auth (env: WS_API_KEY)")
+	jwtSecret := flag.String("jwt-secret", os.Getenv("WS_JWT_SECRET"), "HMAC secret for verifying the authorization JWT (env: WS_JWT_SECRET)")
 	flag.Parse()
+
+	if *apiKey == "" || *jwtSecret == "" {
+		log.Fatal("both -api-key and -jwt-secret (or WS_API_KEY / WS_JWT_SECRET) must be set")
+	}
+	auth := ws.Authenticator{APIKey: *apiKey, JWTSecret: []byte(*jwtSecret)}
 
 	hub := ws.NewHub()
 	go hub.Run()
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
-	r.Use(middleware.Logger)
+	r.Use(redactingLogger)
 	r.Use(middleware.Recoverer)
 
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +85,7 @@ func main() {
 		w.Write([]byte("ok"))
 	})
 	r.Get("/ws", func(w http.ResponseWriter, r *http.Request) {
-		ws.ServeWS(hub, w, r)
+		ws.ServeWS(hub, auth, w, r)
 	})
 
 	srv := &http.Server{

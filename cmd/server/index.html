@@ -44,11 +44,20 @@
   button.ghost { background: color-mix(in srgb, currentColor 15%, transparent); color: inherit; }
   button:disabled { opacity: .5; cursor: not-allowed; }
   .controls { display: flex; gap: .5rem; margin-bottom: .5rem; }
+  .creds { display: flex; gap: .5rem; margin-bottom: .25rem; }
+  code { background: color-mix(in srgb, currentColor 12%, transparent); padding: 0 .25rem; border-radius: 4px; }
 </style>
 </head>
 <body>
   <h1>gortc WebSocket test</h1>
   <p class="sub">Broadcast hub — open this page in multiple tabs to see messages relayed to every client.</p>
+
+  <div class="creds">
+    <input id="apiKey" type="text" placeholder="apiKey" value="demo-key" autocomplete="off">
+    <input id="userId" type="text" placeholder="userId" value="alice" autocomplete="off">
+    <input id="token" type="text" placeholder="authorization (JWT)" autocomplete="off">
+  </div>
+  <p class="sub">The JWT must be HMAC-signed with the server's secret and carry a <code>userId</code> claim equal to the userId above.</p>
 
   <div class="controls">
     <span id="status" class="off">disconnected</span>
@@ -78,7 +87,14 @@
 
   function wsURL() {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    return `${proto}//${location.host}/ws`;
+    // apiKey must match the server's -api-key; authorization must be a JWT
+    // signed with the server's secret whose userId claim equals userId.
+    const params = new URLSearchParams({
+      apiKey: document.getElementById("apiKey").value,
+      userId: document.getElementById("userId").value,
+      authorization: document.getElementById("token").value,
+    });
+    return `${proto}//${location.host}/ws?${params}`;
   }
 
   function log(kind, body) {
@@ -136,8 +152,12 @@
   disconnectBtn.addEventListener("click", disconnect);
   clearBtn.addEventListener("click", () => { logEl.innerHTML = ""; });
 
-  // Auto-connect on load.
-  connect();
+  // Auto-connect only if a token is already filled in.
+  if (document.getElementById("token").value) {
+    connect();
+  } else {
+    log("sys", "enter a JWT in the authorization field, then click Connect");
+  }
 </script>
 </body>
 </html>

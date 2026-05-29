@@ -120,7 +120,16 @@ func (c *Client) writePump() {
 
 // ServeWS handles websocket requests from the peer, upgrading the HTTP
 // connection and registering a new Client with the hub.
-func ServeWS(hub *Hub, w http.ResponseWriter, r *http.Request) {
+//
+// The handshake is authenticated first (see Authenticator); on failure it is
+// rejected with 401 before the connection is upgraded.
+func ServeWS(hub *Hub, auth Authenticator, w http.ResponseWriter, r *http.Request) {
+	if err := auth.authenticate(r); err != nil {
+		log.Printf("ws: handshake rejected: %v", err)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("ws: upgrade failed: %v", err)
