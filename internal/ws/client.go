@@ -1,7 +1,7 @@
 package ws
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -71,7 +71,7 @@ func (c *Client) readPump() {
 	for {
 		if _, _, err := c.conn.ReadMessage(); err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("ws: unexpected close: %v", err)
+				slog.Warn("ws unexpected close", "app", c.appID, "user", c.userID, "err", err)
 			}
 			break
 		}
@@ -132,14 +132,14 @@ func (c *Client) writePump() {
 func ServeWS(hub *Hub, auth Authenticator, w http.ResponseWriter, r *http.Request) {
 	principal, err := auth.authenticate(r)
 	if err != nil {
-		log.Printf("ws: handshake rejected: %v", err)
+		slog.Warn("ws handshake rejected", "err", err)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("ws: upgrade failed: %v", err)
+		slog.Error("ws upgrade failed", "err", err)
 		return
 	}
 	client := &Client{
@@ -156,7 +156,7 @@ func ServeWS(hub *Hub, auth Authenticator, w http.ResponseWriter, r *http.Reques
 	// publishers can target an individual user.
 	channel := PersonalChannel(client.appID, client.userID)
 	client.hub.subscribe <- subscription{client: client, channel: channel}
-	log.Printf("ws: connected app=%s user=%s channel=%s", client.appID, client.userID, channel)
+	slog.Info("ws connected", "app", client.appID, "user", client.userID, "channel", channel)
 
 	// Allow collection of memory referenced by the caller by doing all work
 	// in new goroutines.

@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -27,6 +27,18 @@ var indexHTML []byte
 
 // redactedQueryParams are stripped from request URLs before they are logged.
 var redactedQueryParams = []string{"apiKey", "authorization"}
+
+// setupLogger installs a slog default logger writing to stderr in the given
+// format ("json" or "text").
+func setupLogger(format string) {
+	var h slog.Handler
+	if format == "json" {
+		h = slog.NewJSONHandler(os.Stderr, nil)
+	} else {
+		h = slog.NewTextHandler(os.Stderr, nil)
+	}
+	slog.SetDefault(slog.New(h))
+}
 
 // envOr returns the value of the environment variable key, or def if unset.
 func envOr(key, def string) string {
@@ -52,9 +64,14 @@ func redactingLogger(next http.Handler) http.Handler {
 		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 		start := time.Now()
 		defer func() {
-			log.Printf("%q %s -> %d %dB in %s",
-				r.Method+" "+redactURL(r.URL), r.RemoteAddr,
-				ww.Status(), ww.BytesWritten(), time.Since(start))
+			slog.Info("request",
+				"method", r.Method,
+				"path", redactURL(r.URL),
+				"status", ww.Status(),
+				"bytes", ww.BytesWritten(),
+				"duration", time.Since(start),
+				"remote", r.RemoteAddr,
+			)
 		}()
 		next.ServeHTTP(ww, r)
 	})
@@ -137,25 +154,30 @@ func main() {
 	// Load .env into the process environment before reading flag defaults. A
 	// missing file is fine; real environment variables always take precedence.
 	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
-		log.Printf("warning: could not load .env: %v", err)
+		slog.Warn("could not load .env", "err", err)
 	}
 
 	addr := flag.String("addr", ":8080", "HTTP service address")
 	appsFile := flag.String("apps-file", envOr("WS_APPS_FILE", "apps.json"), "path to the JSON apps config (env: WS_APPS_FILE)")
 	publishSecret := flag.String("publish-secret", os.Getenv("WS_PUBLISH_SECRET"), "shared secret required (Authorization header) to call POST /publish (env: WS_PUBLISH_SECRET)")
+	logFormat := flag.String("log-format", envOr("LOG_FORMAT", "text"), "log output format: text or json")
 	dev := flag.Bool("dev", false, "enable the /dev/token endpoint for minting test JWTs (never use in production)")
 	flag.Parse()
 
+	setupLogger(*logFormat)
+
 	if *publishSecret == "" {
-		log.Fatal("-publish-secret (or WS_PUBLISH_SECRET) must be set")
+		slog.Error("-publish-secret (or WS_PUBLISH_SECRET) must be set")
+		os.Exit(1)
 	}
 
 	cfg, err := config.Load(*appsFile)
 	if err != nil {
-		log.Fatalf("load apps config: %v", err)
+		slog.Error("load apps config", "err", err)
+		os.Exit(1)
 	}
 	auth := ws.NewAuthenticator(appsByKey(cfg.Apps))
-	log.Printf("loaded %d app(s) from %s", len(cfg.Apps), *appsFile)
+	slog.Info("loaded apps", "count", len(cfg.Apps), "file", *appsFile)
 
 	hub := ws.NewHub()
 	go hub.Run()
@@ -179,7 +201,7 @@ func main() {
 	r.Post("/publish", publishHandler(hub, *publishSecret))
 
 	if *dev {
-		log.Println("WARNING: dev mode enabled, /dev/token will mint JWTs for any userId")
+		slog.Warn("dev mode enabled: /dev/token will mint JWTs for any userId")
 		r.Get("/dev/token", devTokenHandler(auth))
 	}
 
@@ -193,9 +215,10 @@ func main() {
 
 	// Start the server in a goroutine so we can listen for shutdown signals.
 	go func() {
-		log.Printf("websocket server listening on %s (endpoint: /ws)", *addr)
+		slog.Info("listening", "addr", *addr, "endpoint", "/ws")
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("server error: %v", err)
+			slog.Error("server error", "err", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -204,11 +227,12 @@ func main() {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
 
-	log.Println("shutting down...")
+	slog.Info("shutting down")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatalf("graceful shutdown failed: %v", err)
+		slog.Error("graceful shutdown failed", "err", err)
+		os.Exit(1)
 	}
-	log.Println("server stopped")
+	slog.Info("server stopped")
 }

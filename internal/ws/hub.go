@@ -2,7 +2,7 @@ package ws
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 )
 
 // Hub maintains the set of active clients and routes published messages to the
@@ -90,7 +90,7 @@ func (h *Hub) deliver(p publication) {
 	}
 	payload, err := json.Marshal(outbound{Channel: p.channel, Data: string(p.data)})
 	if err != nil {
-		log.Printf("ws: marshal publication: %v", err)
+		slog.Error("ws marshal publication", "channel", p.channel, "err", err)
 		return
 	}
 	for client := range subs {
