@@ -3,11 +3,16 @@ package ws
 import (
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+// PersonalChannel returns the channel name a user is auto-subscribed to on
+// connect. Publishers target an individual user by publishing to this channel.
+func PersonalChannel(appID, userID string) string {
+	return appID + ":" + userID
+}
 
 const (
 	// Time allowed to write a message to the peer.
@@ -146,15 +151,12 @@ func ServeWS(hub *Hub, auth Authenticator, w http.ResponseWriter, r *http.Reques
 		userID:   principal.UserID,
 	}
 	client.hub.register <- client
-	log.Printf("ws: connected app=%s user=%s", client.appID, client.userID)
 
-	// Subscribe to the channels named in the "channels" query parameter
-	// (comma-separated), e.g. /ws?...&channels=news,sports.
-	for ch := range strings.SplitSeq(r.URL.Query().Get("channels"), ",") {
-		if ch = strings.TrimSpace(ch); ch != "" {
-			client.hub.subscribe <- subscription{client: client, channel: ch}
-		}
-	}
+	// Auto-subscribe the client to its personal channel "appId:userId" so
+	// publishers can target an individual user.
+	channel := PersonalChannel(client.appID, client.userID)
+	client.hub.subscribe <- subscription{client: client, channel: channel}
+	log.Printf("ws: connected app=%s user=%s channel=%s", client.appID, client.userID, channel)
 
 	// Allow collection of memory referenced by the caller by doing all work
 	// in new goroutines.

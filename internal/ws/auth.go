@@ -35,6 +35,12 @@ func NewAuthenticator(appsByKey map[string]App) Authenticator {
 	return Authenticator{apps: appsByKey}
 }
 
+// AppID returns the appId mapped to apiKey, and whether it is known.
+func (a Authenticator) AppID(apiKey string) (string, bool) {
+	app, ok := a.apps[apiKey]
+	return app.AppID, ok
+}
+
 // Mint signs and returns an HMAC JWT for userID under the app identified by
 // apiKey, valid for ttl. It uses the same secret and algorithm as authenticate,
 // so the result passes validation. Intended for development and testing only.

@@ -67,15 +67,12 @@
     <button id="clear" class="ghost" type="button">Clear log</button>
   </div>
 
-  <div class="controls">
-    <input id="channels" type="text" placeholder="channels to subscribe (comma-separated)" value="news" autocomplete="off">
-  </div>
-  <p class="sub">Subscriptions are set when you connect. The socket is receive-only — publishing is done over HTTP below.</p>
+  <p class="sub">On connect you are auto-subscribed to your personal channel <code>appId:userId</code>. The socket is receive-only — publish to that channel over HTTP below to reach this user.</p>
 
   <div id="log" aria-live="polite"></div>
 
   <form id="form">
-    <input id="pubChannel" type="text" placeholder="channel" value="news" autocomplete="off">
+    <input id="pubChannel" type="text" placeholder="channel (e.g. demo-app:alice)" autocomplete="off">
     <input id="pubSecret" type="text" placeholder="publish secret (Authorization)" autocomplete="off">
     <input id="msg" type="text" placeholder="Message to POST /publish…" autocomplete="off">
     <button id="send" type="submit">Publish</button>
@@ -91,20 +88,18 @@
   const disconnectBtn = document.getElementById("disconnect");
   const clearBtn = document.getElementById("clear");
   const mintBtn = document.getElementById("mint");
-  const channelsInput = document.getElementById("channels");
   const pubChannelInput = document.getElementById("pubChannel");
 
   let ws = null;
 
   function wsURL() {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    // apiKey must match the server's -api-key; authorization must be a JWT
-    // signed with the server's secret whose userId claim equals userId.
+    // apiKey selects the app; authorization must be a JWT signed with that
+    // app's secret whose userId claim equals userId.
     const params = new URLSearchParams({
       apiKey: document.getElementById("apiKey").value,
       userId: document.getElementById("userId").value,
       authorization: document.getElementById("token").value,
-      channels: channelsInput.value,
     });
     return `${proto}//${location.host}/ws?${params}`;
   }
@@ -127,7 +122,6 @@
   function setConnected(connected) {
     disconnectBtn.disabled = !connected;
     connectBtn.disabled = connected;
-    channelsInput.disabled = connected;
     if (connected) input.focus();
   }
 
@@ -187,7 +181,8 @@
       if (!res.ok) { log("sys", `mint failed (${res.status}); check apiKey and that the server runs with -dev`); return; }
       const data = await res.json();
       document.getElementById("token").value = data.token;
-      log("sys", `minted token for "${userId}" (expires in ${data.expiresIn})`);
+      pubChannelInput.value = data.personalChannel;
+      log("sys", `minted token for ${data.personalChannel} (expires in ${data.expiresIn})`);
     } catch (err) {
       log("sys", `mint error: ${err}`);
     }

@@ -76,11 +76,14 @@ func devTokenHandler(auth ws.Authenticator) http.HandlerFunc {
 			http.Error(w, "unknown apiKey", http.StatusBadRequest)
 			return
 		}
+		appID, _ := auth.AppID(apiKey)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
-			"userId":    userID,
-			"token":     token,
-			"expiresIn": ttl.String(),
+			"appId":           appID,
+			"userId":          userID,
+			"token":           token,
+			"expiresIn":       ttl.String(),
+			"personalChannel": ws.PersonalChannel(appID, userID),
 		})
 	}
 }
