@@ -56,6 +56,7 @@
     <input id="apiKey" type="text" placeholder="apiKey" value="demo-key" autocomplete="off">
     <input id="userId" type="text" placeholder="userId" value="alice" autocomplete="off">
     <input id="token" type="text" placeholder="authorization (JWT)" autocomplete="off">
+    <button id="mint" class="ghost" type="button" title="Fetch a JWT from /dev/token (requires -dev)">Mint</button>
   </div>
   <p class="sub">The JWT must be HMAC-signed with the server's secret and carry a <code>userId</code> claim equal to the userId above.</p>
 
@@ -82,6 +83,7 @@
   const connectBtn = document.getElementById("connect");
   const disconnectBtn = document.getElementById("disconnect");
   const clearBtn = document.getElementById("clear");
+  const mintBtn = document.getElementById("mint");
 
   let ws = null;
 
@@ -148,9 +150,24 @@
     input.value = "";
   });
 
+  async function mint() {
+    const userId = document.getElementById("userId").value;
+    if (!userId) { log("sys", "enter a userId before minting"); return; }
+    try {
+      const res = await fetch(`/dev/token?userId=${encodeURIComponent(userId)}`);
+      if (!res.ok) { log("sys", `mint failed (${res.status}); is the server running with -dev?`); return; }
+      const data = await res.json();
+      document.getElementById("token").value = data.token;
+      log("sys", `minted token for "${userId}" (expires in ${data.expiresIn})`);
+    } catch (err) {
+      log("sys", `mint error: ${err}`);
+    }
+  }
+
   connectBtn.addEventListener("click", connect);
   disconnectBtn.addEventListener("click", disconnect);
   clearBtn.addEventListener("click", () => { logEl.innerHTML = ""; });
+  mintBtn.addEventListener("click", mint);
 
   // Auto-connect only if a token is already filled in.
   if (document.getElementById("token").value) {

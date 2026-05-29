@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"flag"
 	"log"
@@ -39,6 +40,30 @@ func redactingLogger(next http.Handler) http.Handler {
 	})
 }
 
+// devTokenHandler mints a JWT for the requested userId. It exists only to make
+// local testing easy and is registered solely when -dev is set.
+func devTokenHandler(auth ws.Authenticator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := r.URL.Query().Get("userId")
+		if userID == "" {
+			http.Error(w, "missing userId query parameter", http.StatusBadRequest)
+			return
+		}
+		ttl := time.Hour
+		token, err := auth.Mint(userID, ttl)
+		if err != nil {
+			http.Error(w, "failed to mint token", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"userId":    userID,
+			"token":     token,
+			"expiresIn": ttl.String(),
+		})
+	}
+}
+
 // redactURL returns the request URI with sensitive query parameters masked.
 func redactURL(u *url.URL) string {
 	q := u.Query()
@@ -61,6 +86,7 @@ func main() {
 	addr := flag.String("addr", ":8080", "HTTP service address")
 	apiKey := flag.String("api-key", os.Getenv("WS_API_KEY"), "expected apiKey for websocket auth (env: WS_API_KEY)")
 	jwtSecret := flag.String("jwt-secret", os.Getenv("WS_JWT_SECRET"), "HMAC secret for verifying the authorization JWT (env: WS_JWT_SECRET)")
+	dev := flag.Bool("dev", false, "enable the /dev/token endpoint for minting test JWTs (never use in production)")
 	flag.Parse()
 
 	if *apiKey == "" || *jwtSecret == "" {
@@ -87,6 +113,11 @@ func main() {
 	r.Get("/ws", func(w http.ResponseWriter, r *http.Request) {
 		ws.ServeWS(hub, auth, w, r)
 	})
+
+	if *dev {
+		log.Println("WARNING: dev mode enabled, /dev/token will mint JWTs for any userId")
+		r.Get("/dev/token", devTokenHandler(auth))
+	}
 
 	srv := &http.Server{
 		Addr:        *addr,

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -16,6 +17,19 @@ type Authenticator struct {
 	APIKey string
 	// JWTSecret is the HMAC secret the "authorization" JWT is verified with.
 	JWTSecret []byte
+}
+
+// Mint signs and returns an HMAC JWT for userID, valid for ttl. It uses the
+// same secret and algorithm as authenticate, so the result passes validation.
+// Intended for development and testing only.
+func (a Authenticator) Mint(userID string, ttl time.Duration) (string, error) {
+	now := time.Now()
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"userId": userID,
+		"iat":    now.Unix(),
+		"exp":    now.Add(ttl).Unix(),
+	})
+	return token.SignedString(a.JWTSecret)
 }
 
 // authenticate checks the request's "apiKey", "authorization" (a JWT) and
